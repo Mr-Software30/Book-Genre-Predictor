@@ -1,3 +1,15 @@
+"""
+Book Genre Predictor - Data Preprocessing Module
+
+This module handles the preprocessing of book data for genre prediction.
+It performs text cleaning, feature engineering, and prepares the data for model training.
+
+Key functions:
+- clean_text: Cleans and normalizes text data
+- infer_genre: Determines the main genre from book tags
+- preprocess_data: Main preprocessing pipeline for the dataset
+"""
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
@@ -5,11 +17,32 @@ import re
 from datetime import datetime
 
 def clean_text(text):
-    if isinstance(text, str):
-        # Remove special characters, extra spaces, and convert to lowercase
-        text = re.sub(r'[^\w\s]', '', text).strip().lower()
-        return re.sub(r'\s+', ' ', text) # Replace multiple spaces with single
-    return ''
+    """
+    Clean and normalize text data.
+    
+    Args:
+        text (str): Input text to clean
+        
+    Returns:
+        str: Cleaned and normalized text
+    """
+    if pd.isna(text):
+        return ""
+    
+    # Convert to lowercase and remove special characters
+    text = str(text).lower()
+    text = re.sub(r'[^a-z0-9\s]', '', text)
+    
+    # Tokenize and remove stopwords
+    tokens = nltk.word_tokenize(text)
+    stop_words = set(stopwords.words('english'))
+    tokens = [t for t in tokens if t not in stop_words]
+    
+    # Lemmatize tokens
+    lemmatizer = WordNetLemmatizer()
+    tokens = [lemmatizer.lemmatize(t) for t in tokens]
+    
+    return ' '.join(tokens)
 
 def get_main_author(authors):
     if not isinstance(authors, str):
@@ -97,6 +130,15 @@ for broad_genre, tags in genre_mapping.items():
 
 # Function to infer the main genre based on top tags
 def infer_main_genre(tags_str):
+    """
+    Infer the main genre from book tags.
+    
+    Args:
+        tags_str (str): Comma-separated book tags
+        
+    Returns:
+        str: Main genre of the book
+    """
     if not isinstance(tags_str, str):
         return 'Other'
     tags = tags_str.split()

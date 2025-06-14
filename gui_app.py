@@ -1,176 +1,159 @@
+"""
+Book Genre Predictor - GUI Application
+
+This module provides a graphical user interface for the Book Genre Predictor.
+It allows users to input book details and get genre predictions using the trained model.
+
+Key features:
+- Input fields for book title, author, and keywords
+- Real-time genre prediction
+- Display of prediction confidence
+- User-friendly interface with clear instructions
+"""
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 import joblib
 import pandas as pd
-import re
-from datetime import datetime
+import numpy as np
+from preprocess import clean_text
 
-# --- Helper functions from preprocess.py (for consistent cleaning) ---
-def clean_text(text):
-    if isinstance(text, str):
-        text = re.sub(r'[^\w\s]', '', text).strip().lower()
-        return re.sub(r'\s+', ' ', text)
-    return ''
-
-def get_main_author(authors):
-    if not isinstance(authors, str):
-        return ''
-    return authors.split(',')[0].strip()
-
-def extract_year(date_str):
-    if pd.isna(date_str):
-        return None
-    try:
-        if isinstance(date_str, (int, float)):
-            return int(date_str)
-        date_obj = pd.to_datetime(date_str, errors='coerce')
-        if pd.notna(date_obj):
-            return date_obj.year
-        year_match = re.search(r'\b(19|20)\d{2}\b', str(date_str))
-        if year_match:
-            return int(year_match.group())
-        return None
-    except:
-        return None
-
-# --- GUI Class ---
-class GenrePredictorGUI:
+class BookGenrePredictorGUI:
+    """
+    GUI application for book genre prediction.
+    
+    This class creates and manages the graphical user interface for the
+    Book Genre Predictor application.
+    """
+    
     def __init__(self, root):
+        """
+        Initialize the GUI application.
+        
+        Args:
+            root: Tkinter root window
+        """
         self.root = root
         self.root.title("Book Genre Predictor")
-        self.root.geometry("800x600")
-        self.root.configure(bg='#2C3E50')
-
-        # Load the trained model and genre classes
+        self.root.geometry("600x500")
+        
+        # Load the trained model and vectorizer
         try:
-            self.model = joblib.load('genre_prediction_model.joblib')
-            self.genre_classes_df = pd.read_csv('genre_classes.csv')
-            self.genre_id_to_name = dict(zip(self.genre_classes_df['genre_id'], self.genre_classes_df['genre_name']))
-        except FileNotFoundError as e:
-            messagebox.showerror("Error", f"Model or data files not found: {e}. Please run preprocess.py and train_model.py first.")
+            self.model = joblib.load('book_genre_model.joblib')
+            self.vectorizer = joblib.load('tfidf_vectorizer.joblib')
+            self.genre_classes = pd.read_csv('genre_classes.csv')
+        except FileNotFoundError:
+            messagebox.showerror("Error", "Model files not found. Please train the model first.")
             root.destroy()
             return
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load resources: {e}")
-            root.destroy()
-            return
-
-        # Styling
-        self.style = ttk.Style()
-        self.style.configure('Modern.TFrame', background='#2C3E50')
-        self.style.configure('Modern.TLabel', background='#2C3E50', foreground='white', font=('Helvetica', 12))
-        self.style.configure('Modern.TButton', background='#3498DB', foreground='white', font=('Helvetica', 12, 'bold'))
-        self.style.map('Modern.TButton', background=[('active', '#217DBB')])
-
-        # Main Frame
-        main_frame = ttk.Frame(root, style='Modern.TFrame', padding="30")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        """Create and arrange GUI widgets."""
         # Title
         title_label = ttk.Label(
-            main_frame,
-            text="📚 Book Genre Predictor 📚",
-            font=('Helvetica', 20, 'bold'),
-            style='Modern.TLabel'
+            self.root,
+            text="Book Genre Predictor",
+            font=("Helvetica", 16, "bold")
         )
-        title_label.pack(pady=15)
-
-        # Instructions
-        instructions_label = ttk.Label(
-            main_frame,
-            text="Enter details about a book, and I'll predict its main genre!",
-            style='Modern.TLabel'
-        )
-        instructions_label.pack(pady=10)
-
-        # Input Fields
-        input_grid = ttk.Frame(main_frame, style='Modern.TFrame')
-        input_grid.pack(pady=20)
-
-        # Text Features
-        ttk.Label(input_grid, text="Book Title:", style='Modern.TLabel').grid(row=0, column=0, sticky=tk.W, pady=5, padx=5)
-        self.title_entry = ttk.Entry(input_grid, width=40, font=('Helvetica', 11))
-        self.title_entry.grid(row=0, column=1, pady=5, padx=5)
-
-        ttk.Label(input_grid, text="Author:", style='Modern.TLabel').grid(row=1, column=0, sticky=tk.W, pady=5, padx=5)
-        self.author_entry = ttk.Entry(input_grid, width=40, font=('Helvetica', 11))
-        self.author_entry.grid(row=1, column=1, pady=5, padx=5)
-
-        ttk.Label(input_grid, text="Keywords/Tags:", style='Modern.TLabel').grid(row=2, column=0, sticky=tk.W, pady=5, padx=5)
-        self.tags_entry = ttk.Entry(input_grid, width=40, font=('Helvetica', 11))
-        self.tags_entry.grid(row=2, column=1, pady=5, padx=5)
-        ttk.Label(input_grid, text="(e.g., magic, detective, romance)", font=('Helvetica', 9, 'italic'), foreground='#BDC3C7', background='#2C3E50').grid(row=3, column=1, sticky=tk.W, padx=5)
-
-        # Predict Button
+        title_label.pack(pady=20)
+        
+        # Input frame
+        input_frame = ttk.Frame(self.root)
+        input_frame.pack(padx=20, pady=10, fill="x")
+        
+        # Book title input
+        ttk.Label(input_frame, text="Book Title:").pack(anchor="w")
+        self.title_entry = ttk.Entry(input_frame, width=50)
+        self.title_entry.pack(pady=5)
+        
+        # Author input
+        ttk.Label(input_frame, text="Author:").pack(anchor="w")
+        self.author_entry = ttk.Entry(input_frame, width=50)
+        self.author_entry.pack(pady=5)
+        
+        # Keywords input
+        ttk.Label(input_frame, text="Keywords/Tags (comma-separated):").pack(anchor="w")
+        self.keywords_entry = ttk.Entry(input_frame, width=50)
+        self.keywords_entry.pack(pady=5)
+        
+        # Predict button
         predict_button = ttk.Button(
-            main_frame,
-            text="🔮 Predict Genre",
-            command=self.predict_genre,
-            style='Modern.TButton'
+            self.root,
+            text="Predict Genre",
+            command=self.predict_genre
         )
         predict_button.pack(pady=20)
-
-        # Prediction Result Label
-        self.result_label = ttk.Label(
-            main_frame,
-            text="",
-            font=('Helvetica', 16, 'bold'),
-            style='Modern.TLabel',
-            foreground='#27AE60'
-        )
-        self.result_label.pack(pady=10)
-
-    def predict_genre(self):
-        # Get text features
-        title = self.title_entry.get()
-        author = self.author_entry.get()
-        tags = self.tags_entry.get()
-
-        if not title and not tags:
-            messagebox.showwarning("Input Error", "Please enter at least a Book Title or some Keywords/Tags.")
-            return
-
-        # Preprocess text features
-        clean_title_input = clean_text(title)
-        main_author_input = get_main_author(author)
-        clean_author_input = clean_text(main_author_input)
-        clean_tags_input = clean_text(tags)
-
-        # Combine text features
-        text_features_combined = f"{clean_title_input} {clean_author_input} {clean_tags_input}"
         
-        if not text_features_combined.strip():
-            messagebox.showwarning("Input Error", "Combined input is empty. Please provide more details.")
+        # Result frame
+        self.result_frame = ttk.Frame(self.root)
+        self.result_frame.pack(padx=20, pady=10, fill="x")
+        
+        # Result labels
+        self.genre_label = ttk.Label(
+            self.result_frame,
+            text="Predicted Genre: ",
+            font=("Helvetica", 12)
+        )
+        self.genre_label.pack(pady=5)
+        
+        self.confidence_label = ttk.Label(
+            self.result_frame,
+            text="Confidence: ",
+            font=("Helvetica", 12)
+        )
+        self.confidence_label.pack(pady=5)
+    
+    def predict_genre(self):
+        """
+        Predict the genre based on user input.
+        
+        This method:
+        1. Gets input from the user
+        2. Preprocesses the input
+        3. Makes a prediction using the trained model
+        4. Updates the GUI with the results
+        """
+        # Get input
+        title = self.title_entry.get().strip()
+        author = self.author_entry.get().strip()
+        keywords = self.keywords_entry.get().strip()
+        
+        if not title or not author:
+            messagebox.showwarning("Warning", "Please enter both title and author.")
             return
+        
+        # Preprocess input
+        content_features = clean_text(f"{title} {author} {keywords}")
+        
+        # Transform text features
+        X_text = self.vectorizer.transform([content_features])
+        
+        # Create numerical features (using default values for now)
+        X_numerical = np.array([[0, 0, 0]])  # [popularity, rating_score, engagement_score]
+        
+        # Combine features
+        X = np.hstack([X_text.toarray(), X_numerical])
+        
+        # Make prediction
+        prediction = self.model.predict(X)[0]
+        probabilities = self.model.predict_proba(X)[0]
+        confidence = probabilities[prediction]
+        
+        # Get genre name
+        genre_name = self.genre_classes[
+            self.genre_classes['genre_encoded'] == prediction
+        ]['genre'].values[0]
+        
+        # Update GUI
+        self.genre_label.config(text=f"Predicted Genre: {genre_name}")
+        self.confidence_label.config(text=f"Confidence: {confidence:.1%}")
 
-        # Create feature dictionary
-        features = {
-            'text_features_combined': text_features_combined,
-            'title_length': len(clean_title_input),
-            'author_count': len(author.split(',')) if author else 1,
-            'tag_count': len(tags.split()) if tags else 0,
-            'rating_std': 0,  # Default values for rating statistics
-            'rating_skew': 0,
-            'high_rating_ratio': 0
-        }
-
-        # Create DataFrame for prediction
-        input_df = pd.DataFrame([features])
-
-        try:
-            # Make prediction
-            predicted_genre_encoded = self.model.predict(input_df)[0]
-            predicted_genre_name = self.genre_id_to_name.get(predicted_genre_encoded, "Unknown")
-
-            # Display result
-            self.result_label.config(text=f"Predicted Genre: {predicted_genre_name}", foreground='#27AE60')
-        except Exception as e:
-            messagebox.showerror("Prediction Error", f"Failed to make prediction: {str(e)}")
-
-# --- Main application entry point ---
 def main():
+    """Main function to run the GUI application."""
     root = tk.Tk()
-    app = GenrePredictorGUI(root)
+    app = BookGenrePredictorGUI(root)
     root.mainloop()
 
 if __name__ == "__main__":
