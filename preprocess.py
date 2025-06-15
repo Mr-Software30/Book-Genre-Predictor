@@ -6,15 +6,52 @@ It performs text cleaning, feature engineering, and prepares the data for model 
 
 Key functions:
 - clean_text: Cleans and normalizes text data
-- infer_genre: Determines the main genre from book tags
-- preprocess_data: Main preprocessing pipeline for the dataset
+- get_main_author: Extracts the primary author from a list of authors
+- calculate_rating_stats: Computes rating distribution statistics
+- infer_main_genre: Determines the main genre from book tags
+- preprocess_data_pipeline: Main preprocessing pipeline for the dataset
 """
 
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 import re
-from datetime import datetime
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import joblib
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Define genre mapping for broader genre categories
+GENRE_MAPPING = {
+    'fiction': ['fiction', 'novel', 'contemporary', 'literary-fiction', 'modern-classics'],
+    'fantasy': ['fantasy', 'magic', 'dragons', 'epic-fantasy', 'high-fantasy', 'urban-fantasy', 'paranormal'],
+    'mystery': ['mystery', 'thriller', 'crime', 'suspense', 'detective'],
+    'romance': ['romance', 'love', 'chick-lit'],
+    'young-adult': ['young-adult', 'ya', 'teen', 'childrens'],
+    'science-fiction': ['science-fiction', 'sci-fi', 'dystopian', 'space'],
+    'historical-fiction': ['historical-fiction', 'historical', 'history'],
+    'classics': ['classics', 'classic', 'literature', '19th-century', '20th-century'],
+    'biography': ['biography', 'memoir', 'autobiography', 'diary', 'personal-account', 'non-fiction-biography', 'historical-biography', 'war-memoir', 'holocaust', 'world-war-2'],
+    'non-fiction': ['non-fiction', 'history', 'science', 'politics', 'philosophy', 'self-help', 'business'],
+    'horror': ['horror', 'supernatural', 'gothic'],
+    'poetry': ['poetry'],
+    'humor': ['humor', 'comedy'],
+    'graphic-novel': ['graphic-novels', 'comics', 'manga']
+}
+
+# Create inverted mapping for quick lookup
+TAG_TO_GENRE = {}
+for genre, tags in GENRE_MAPPING.items():
+    for tag in tags:
+        TAG_TO_GENRE[tag] = genre
 
 def clean_text(text):
     """
@@ -45,11 +82,29 @@ def clean_text(text):
     return ' '.join(tokens)
 
 def get_main_author(authors):
+    """
+    Extract the primary author from a list of authors.
+    
+    Args:
+        authors (str): Comma-separated list of authors
+        
+    Returns:
+        str: Primary author name
+    """
     if not isinstance(authors, str):
         return ''
     return authors.split(',')[0].strip()
 
 def extract_year(date_str):
+    """
+    Extract year from various date formats.
+    
+    Args:
+        date_str: Date string or number
+        
+    Returns:
+        int or None: Extracted year or None if not found
+    """
     if pd.isna(date_str):
         return None
     try:
@@ -69,6 +124,15 @@ def extract_year(date_str):
         return None
 
 def calculate_rating_stats(row):
+    """
+    Calculate rating distribution statistics.
+    
+    Args:
+        row (pd.Series): Row containing rating counts
+        
+    Returns:
+        pd.Series: Statistics including standard deviation, skewness, and high rating ratio
+    """
     # Calculate rating distribution statistics
     total_ratings = sum(row[f'ratings_{i}'] for i in range(1, 6))
     if total_ratings == 0:
@@ -89,46 +153,6 @@ def calculate_rating_stats(row):
         'high_rating_ratio': (row['ratings_4'] + row['ratings_5']) / total_ratings
     })
 
-# Load the datasets
-print("Loading datasets...")
-try:
-    books_df = pd.read_csv("archive/books.csv")
-    tags_df = pd.read_csv("archive/tags.csv")
-    book_tags_df = pd.read_csv("archive/book_tags.csv")
-except FileNotFoundError as e:
-    print(f"Error loading files: {e}. Make sure 'archive' folder with datasets is in the same directory.")
-    exit()
-
-# Merge tags with books
-print("Processing tags and inferring genres...")
-book_tags = book_tags_df.merge(tags_df, on='tag_id')
-
-# Define a mapping for broader genres from specific tags
-# This is crucial for defining our target variable
-genre_mapping = {
-    'fiction': ['fiction', 'novel', 'contemporary', 'literary-fiction', 'modern-classics'],
-    'fantasy': ['fantasy', 'magic', 'dragons', 'epic-fantasy', 'high-fantasy', 'urban-fantasy', 'paranormal'],
-    'mystery': ['mystery', 'thriller', 'crime', 'suspense', 'detective'],
-    'romance': ['romance', 'love', 'chick-lit'],
-    'young-adult': ['young-adult', 'ya', 'teen', 'childrens'],
-    'science-fiction': ['science-fiction', 'sci-fi', 'dystopian', 'space'],
-    'historical-fiction': ['historical-fiction', 'historical', 'history'],
-    'classics': ['classics', 'classic', 'literature', '19th-century', '20th-century'],
-    'biography': ['biography', 'memoir', 'autobiography', 'diary', 'personal-account', 'non-fiction-biography', 'historical-biography', 'war-memoir', 'holocaust', 'world-war-2'],
-    'non-fiction': ['non-fiction', 'history', 'science', 'politics', 'philosophy', 'self-help', 'business'],
-    'horror': ['horror', 'supernatural', 'gothic'],
-    'poetry': ['poetry'],
-    'humor': ['humor', 'comedy'],
-    'graphic-novel': ['graphic-novels', 'comics', 'manga']
-}
-
-# Invert mapping for quick lookup: tag -> broad_genre
-tag_to_broad_genre = {}
-for broad_genre, tags in genre_mapping.items():
-    for tag in tags:
-        tag_to_broad_genre[tag] = broad_genre
-
-# Function to infer the main genre based on top tags
 def infer_main_genre(tags_str):
     """
     Infer the main genre from book tags.
@@ -141,6 +165,7 @@ def infer_main_genre(tags_str):
     """
     if not isinstance(tags_str, str):
         return 'Other'
+    
     tags = tags_str.split()
     genre_counts = {}
     
@@ -150,7 +175,7 @@ def infer_main_genre(tags_str):
         return 'biography'
     
     for tag in tags:
-        broad_genre = tag_to_broad_genre.get(tag, 'Other')
+        broad_genre = TAG_TO_GENRE.get(tag, 'Other')
         # Give extra weight to biographical tags
         if broad_genre == 'biography':
             genre_counts[broad_genre] = genre_counts.get(broad_genre, 0) + 2
@@ -165,70 +190,95 @@ def infer_main_genre(tags_str):
         return max(genre_counts, key=genre_counts.get)
     return 'Other'
 
-# Group by book and get top tags based on count, then infer genre
-book_tags_grouped = book_tags.groupby('goodreads_book_id')['tag_name'].apply(
-    lambda x: ' '.join(x.value_counts().nlargest(10).index) # Get top 10 tags by count
-).reset_index(name='top_tags_string')
+def preprocess_data_pipeline(input_books_file='archive/books.csv', 
+                           input_tags_file='archive/tags.csv', 
+                           input_book_tags_file='archive/book_tags.csv',
+                           output_cleaned_books_file='cleaned_books_genre.csv',
+                           output_genre_classes_file='genre_classes.csv'):
+    """
+    Main preprocessing pipeline for the dataset.
+    
+    Args:
+        input_books_file (str): Path to books CSV file
+        input_tags_file (str): Path to tags CSV file
+        input_book_tags_file (str): Path to book-tags CSV file
+        output_cleaned_books_file (str): Path to save cleaned books data
+        output_genre_classes_file (str): Path to save genre classes
+    
+    Returns:
+        tuple: (cleaned_books_df, genre_classes_df) or (None, None) if error
+    """
+    try:
+        # Load the datasets
+        logger.info("Loading datasets...")
+        books_df = pd.read_csv(input_books_file)
+        tags_df = pd.read_csv(input_tags_file)
+        book_tags_df = pd.read_csv(input_book_tags_file)
+        
+        # Merge tags with books
+        logger.info("Processing tags and inferring genres...")
+        book_tags = book_tags_df.merge(tags_df, on='tag_id')
+        
+        # Group by book and get top tags
+        book_tags_grouped = book_tags.groupby('goodreads_book_id')['tag_name'].apply(
+            lambda x: ' '.join(x.value_counts().nlargest(10).index)
+        ).reset_index(name='top_tags_string')
+        
+        books_df = books_df.merge(book_tags_grouped, 
+                                left_on='book_id', 
+                                right_on='goodreads_book_id', 
+                                how='left')
+        books_df['top_tags_string'] = books_df['top_tags_string'].fillna('')
+        
+        # Infer the main genre
+        books_df['genre'] = books_df['top_tags_string'].apply(infer_main_genre)
+        
+        # Clean and prepare text features
+        logger.info("Cleaning text features...")
+        books_df['clean_title'] = books_df['title'].apply(clean_text)
+        books_df['clean_authors'] = books_df['authors'].apply(get_main_author).apply(clean_text)
+        books_df['clean_top_tags'] = books_df['top_tags_string'].apply(clean_text)
+        
+        # Calculate rating statistics
+        logger.info("Calculating rating statistics...")
+        rating_stats = books_df.apply(calculate_rating_stats, axis=1)
+        books_df = pd.concat([books_df, rating_stats], axis=1)
+        
+        # Create additional numerical features
+        logger.info("Creating additional numerical features...")
+        books_df['popularity'] = books_df['ratings_count'].fillna(0)
+        books_df['rating_score'] = books_df['average_rating'].fillna(0)
+        books_df['engagement_score'] = (books_df['ratings_count'] * books_df['average_rating']).fillna(0)
+        
+        # Save processed data
+        logger.info("Saving processed data...")
+        books_df.to_csv(output_cleaned_books_file, index=False)
+        
+        # Create and save genre classes
+        genre_classes = pd.DataFrame({
+            'genre_id': range(len(books_df['genre'].unique())),
+            'genre_name': sorted(books_df['genre'].unique())
+        })
+        genre_classes.to_csv(output_genre_classes_file, index=False)
+        
+        logger.info("Preprocessing completed successfully!")
+        return books_df, genre_classes
+        
+    except Exception as e:
+        logger.error(f"Error in preprocessing pipeline: {str(e)}")
+        return None, None
 
-books_df = books_df.merge(book_tags_grouped, left_on='book_id', right_on='goodreads_book_id', how='left')
-books_df['top_tags_string'] = books_df['top_tags_string'].fillna('')
-
-# Infer the main genre (our target variable 'genre')
-books_df['genre'] = books_df['top_tags_string'].apply(infer_main_genre)
-
-# Clean and prepare text features
-print("Cleaning text features...")
-books_df['clean_title'] = books_df['title'].apply(clean_text)
-books_df['clean_authors'] = books_df['authors'].apply(get_main_author).apply(clean_text)
-books_df['clean_top_tags'] = books_df['top_tags_string'].apply(clean_text)
-
-# Calculate rating statistics
-print("Calculating rating statistics...")
-rating_stats = books_df.apply(calculate_rating_stats, axis=1)
-books_df = pd.concat([books_df, rating_stats], axis=1)
-
-# Create additional features
-books_df['title_length'] = books_df['clean_title'].str.len()
-books_df['author_count'] = books_df['authors'].str.count(',') + 1
-books_df['tag_count'] = books_df['top_tags_string'].str.count(' ') + 1
-
-# Combine text features for TF-IDF
-books_df['text_features_combined'] = (
-    books_df['clean_title'] + ' ' + 
-    books_df['clean_authors'] + ' ' + 
-    books_df['clean_top_tags']
-)
-
-# Select final features and target
-feature_columns = [
-    'book_id', 'title', 'authors', 'text_features_combined',
-    'title_length', 'author_count', 'tag_count',
-    'rating_std', 'rating_skew', 'high_rating_ratio',
-    'genre'
-]
-
-final_df = books_df[feature_columns].copy()
-
-# Filter out books where genre could not be confidently inferred
-final_df = final_df[final_df['genre'] != 'Other']
-
-# Encode the genre labels
-label_encoder = LabelEncoder()
-final_df['genre_encoded'] = label_encoder.fit_transform(final_df['genre'])
-
-# Save the label encoder classes correctly (mapping integer ID to genre name)
-genre_classes_df = pd.DataFrame({
-    'genre_id': label_encoder.transform(label_encoder.classes_), 
-    'genre_name': label_encoder.classes_
-})
-genre_classes_df.to_csv("genre_classes.csv", index=False)
-
-# Save cleaned data
-print("Saving processed data...")
-final_df.to_csv("cleaned_books_genre.csv", index=False)
-
-print("\n✅ Preprocessing complete. File saved as cleaned_books_genre.csv")
-print(f"Total books processed for genre prediction: {len(final_df)}")
-print("\nGenre Distribution:")
-print(final_df['genre'].value_counts())
-print(f"Number of unique genres: {len(final_df['genre'].unique())}") 
+if __name__ == "__main__":
+    # Download required NLTK data
+    try:
+        nltk.data.find('tokenizers/punkt')
+        nltk.data.find('corpora/stopwords')
+        nltk.data.find('corpora/wordnet')
+    except LookupError:
+        logger.info("Downloading required NLTK data...")
+        nltk.download('punkt')
+        nltk.download('stopwords')
+        nltk.download('wordnet')
+    
+    # Run preprocessing pipeline
+    preprocess_data_pipeline() 
