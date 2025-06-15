@@ -38,9 +38,9 @@ GENRE_MAPPING = {
     'young-adult': ['young-adult', 'ya', 'teen', 'childrens'],
     'science-fiction': ['science-fiction', 'sci-fi', 'dystopian', 'space'],
     'historical-fiction': ['historical-fiction', 'historical', 'history'],
-    'classics': ['classics', 'classic', 'literature', '19th-century', '20th-century'],
+    'classics': ['classics', 'classic', 'literature', '19th-century', '20th-century', 'philosophical', 'psychology'],
     'biography': ['biography', 'memoir', 'autobiography', 'diary', 'personal-account', 'non-fiction-biography', 'historical-biography', 'war-memoir', 'holocaust', 'world-war-2'],
-    'non-fiction': ['non-fiction', 'history', 'science', 'politics', 'philosophy', 'self-help', 'business'],
+    'non-fiction': ['non-fiction', 'history', 'science', 'politics', 'philosophy', 'self-help', 'business', 'psychology'],
     'horror': ['horror', 'supernatural', 'gothic'],
     'poetry': ['poetry'],
     'humor': ['humor', 'comedy'],
@@ -169,15 +169,15 @@ def infer_main_genre(tags_str):
     tags = tags_str.split()
     genre_counts = {}
     
-    # Special handling for biographical works
+    # Special handling for biographical works (modified to add weight, not immediate return)
     biographical_keywords = ['diary', 'memoir', 'autobiography', 'biography', 'personal-account']
     if any(keyword in tags for keyword in biographical_keywords):
-        return 'biography'
+        genre_counts['biography'] = genre_counts.get('biography', 0) + 3 # Give strong weight
     
     for tag in tags:
         broad_genre = TAG_TO_GENRE.get(tag, 'Other')
-        # Give extra weight to biographical tags
-        if broad_genre == 'biography':
+        # Give extra weight to biographical tags (this part remains, but above is primary bio handling)
+        if broad_genre == 'biography' and not any(keyword in tags for keyword in biographical_keywords):
             genre_counts[broad_genre] = genre_counts.get(broad_genre, 0) + 2
         else:
             genre_counts[broad_genre] = genre_counts.get(broad_genre, 0) + 1
@@ -235,9 +235,9 @@ def preprocess_data_pipeline(input_books_file='archive/books.csv',
         
         # Clean and prepare text features
         logger.info("Cleaning text features...")
-        books_df['clean_title'] = books_df['title'].apply(clean_text)
-        books_df['clean_authors'] = books_df['authors'].apply(get_main_author).apply(clean_text)
-        books_df['clean_top_tags'] = books_df['top_tags_string'].apply(clean_text)
+        books_df['clean_title'] = books_df['title'].apply(clean_text).fillna('')
+        books_df['clean_authors'] = books_df['authors'].apply(get_main_author).apply(clean_text).fillna('')
+        books_df['clean_top_tags'] = books_df['top_tags_string'].apply(clean_text).fillna('')
         
         # Calculate rating statistics
         logger.info("Calculating rating statistics...")
@@ -249,20 +249,47 @@ def preprocess_data_pipeline(input_books_file='archive/books.csv',
         books_df['popularity'] = books_df['ratings_count'].fillna(0)
         books_df['rating_score'] = books_df['average_rating'].fillna(0)
         books_df['engagement_score'] = (books_df['ratings_count'] * books_df['average_rating']).fillna(0)
+        books_df['title_length'] = books_df['clean_title'].str.len().fillna(0)
+        books_df['author_count'] = books_df['authors'].fillna('').str.count(',') + 1
+        books_df['tag_count'] = books_df['top_tags_string'].apply(lambda x: len(str(x).split()) if pd.notna(x) else 0)
+
+        # Combine text features for TF-IDF
+        books_df['text_features'] = (
+            books_df['clean_title'] + ' ' + 
+            books_df['clean_authors'] + ' ' + 
+            books_df['clean_top_tags']
+        ).fillna('')
         
+        final_df = books_df[books_df['genre'] != 'Other']
+
+        # Log unique genres before encoding
+        logger.info(f"Number of unique genres before encoding: {final_df['genre'].nunique()}")
+
+        # Encode the genre labels and save the encoder
+        label_encoder = LabelEncoder()
+        final_df['genre_encoded'] = label_encoder.fit_transform(final_df['genre'])
+        
+        # Log number of classes learned by LabelEncoder
+        logger.info(f"LabelEncoder classes found: {len(label_encoder.classes_)}")
+        logger.info(f"LabelEncoder classes mapping (ID to Name): {list(enumerate(label_encoder.classes_))}")
+        
+        # Ensure text features are strings before saving
+        final_df['text_features'] = final_df['text_features'].astype(str)
+
         # Save processed data
         logger.info("Saving processed data...")
-        books_df.to_csv(output_cleaned_books_file, index=False)
+        final_df.to_csv(output_cleaned_books_file, index=False)
         
-        # Create and save genre classes
+        # Create and save genre classes mapping from the fitted LabelEncoder
         genre_classes = pd.DataFrame({
-            'genre_id': range(len(books_df['genre'].unique())),
-            'genre_name': sorted(books_df['genre'].unique())
+            'genre_id': label_encoder.transform(label_encoder.classes_),
+            'genre_name': label_encoder.classes_
         })
+        logger.info(f"Genre Classes DataFrame content before saving:\n{genre_classes}")
         genre_classes.to_csv(output_genre_classes_file, index=False)
         
         logger.info("Preprocessing completed successfully!")
-        return books_df, genre_classes
+        return final_df, genre_classes
         
     except Exception as e:
         logger.error(f"Error in preprocessing pipeline: {str(e)}")

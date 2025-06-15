@@ -44,7 +44,7 @@ def prepare_features(df):
             df['clean_title'] + ' ' + 
             df['clean_authors'] + ' ' + 
             df['clean_top_tags']
-        )
+        ).fillna('').astype(str) # Ensure no NaN and convert to string
         
         # Create TF-IDF vectorizer
         vectorizer = TfidfVectorizer(
@@ -60,13 +60,14 @@ def prepare_features(df):
         # Prepare numerical features
         numerical_features = [
             'rating_std', 'rating_skew', 'high_rating_ratio',
-            'popularity', 'rating_score', 'engagement_score'
+            'popularity', 'rating_score', 'engagement_score',
+            'title_length', 'author_count', 'tag_count'
         ]
         X_num = df[numerical_features].values
         
         # Combine features
         X = np.hstack([X_text.toarray(), X_num])
-        y = df['genre']
+        y = df['genre_encoded']
         
         return X, y, vectorizer
         
@@ -95,8 +96,8 @@ def train_model(X, y, test_size=0.2, random_state=42):
         
         # Initialize and train model
         model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
+            n_estimators=200,
+            max_depth=20,
             min_samples_split=5,
             min_samples_leaf=2,
             random_state=random_state
